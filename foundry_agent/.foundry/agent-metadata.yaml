@@ -1,0 +1,10 @@
+defaultEnvironment: dev
+
+environments:
+  dev:
+    projectEndpoint: "<your-foundry-project-endpoint>"
+
+agent:
+  name: "store-intelligence-assistant"
+  model: "gpt-4o"
+  description: "Retail Store Intelligence orchestrator — routes to Fabric Sales, Inventory, and Labor data agents."
