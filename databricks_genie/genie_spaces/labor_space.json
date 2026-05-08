@@ -1,0 +1,211 @@
+{
+  "title": "Store Intelligence — Labor",
+  "description": "Workforce analytics: staffing levels, shift coverage, role distribution, associate productivity, and coverage risk identification.",
+  "warehouse_id": "<your-sql-warehouse-id>",
+  "parent_path": "/Workspace/Users/<username>",
+  "serialized_space": {
+    "version": 2,
+    "config": {
+      "sample_questions": [
+        {
+          "id": "a100000000000000000000000000200a",
+          "question": ["How many associates per store?"]
+        },
+        {
+          "id": "a200000000000000000000000000200b",
+          "question": ["Which stores are understaffed compared to average?"]
+        },
+        {
+          "id": "a300000000000000000000000000200c",
+          "question": ["Stores with single-associate shifts"]
+        }
+      ]
+    },
+    "data_sources": {
+      "tables": [
+        {
+          "identifier": "${catalog}.retail.associate_assignments",
+          "description": ["Raw associate assignment records: store, associate, shift, role, orders managed, tasks completed."]
+        },
+        {
+          "identifier": "${catalog}.retail.regions",
+          "column_configs": [
+            {
+              "column_name": "reg_name",
+              "enable_entity_matching": true,
+              "enable_format_assistance": true
+            }
+          ]
+        },
+        {
+          "identifier": "${catalog}.retail.stores",
+          "column_configs": [
+            {
+              "column_name": "str_name",
+              "enable_entity_matching": true
+            },
+            {
+              "column_name": "str_type",
+              "enable_entity_matching": true,
+              "enable_format_assistance": true
+            }
+          ]
+        },
+        {
+          "identifier": "${catalog}.retail.vw_labor_coverage",
+          "description": ["Associate assignments enriched with store and region dimensions. One row per associate assignment. Prefer this view for most queries."]
+        }
+      ]
+    },
+    "instructions": {
+      "text_instructions": [
+        {
+          "id": "b100000000000000000000000000200a",
+          "content": [
+            "You are a Retail Workforce Analyst. Help users understand staffing levels, shift coverage, role distribution, and associate productivity. ",
+            "Data is at store level — associate_assignments has str_id so you can report per-store. ",
+            "Shifts: group by the shift column to show coverage per shift. ",
+            "Roles: use the role column for role-mix analysis (e.g., cashier, stocker, manager). ",
+            "Productivity metrics: orders_managed (ords_mng) = orders handled; tasks_completed (tasks_cplt) = tasks done. ",
+            "Headcount = COUNT(DISTINCT associate_id) per store/shift/role. ",
+            "When asked if a store is understaffed, compare its headcount against the average headcount of similar store types (str_type). ",
+            "For store health check: provide total associates, shift breakdown, role mix, avg orders managed per associate, avg tasks completed per associate. ",
+            "Flag stores where any shift has only 1 associate as a potential coverage risk."
+          ]
+        }
+      ],
+      "example_question_sqls": [
+        {
+          "id": "c100000000000000000000000000200a",
+          "question": ["How many associates per store?"],
+          "sql": [
+            "SELECT store_name, store_type, reg_name,\n",
+            "  COUNT(DISTINCT associate_id) AS headcount\n",
+            "FROM ${catalog}.retail.vw_labor_coverage\n",
+            "GROUP BY store_name, store_type, reg_name\n",
+            "ORDER BY headcount ASC"
+          ]
+        },
+        {
+          "id": "c200000000000000000000000000200b",
+          "question": ["Which stores are understaffed compared to average?"],
+          "sql": [
+            "WITH store_hc AS (\n",
+            "  SELECT store_id, store_name, store_type, reg_name,\n",
+            "    COUNT(DISTINCT associate_id) AS headcount\n",
+            "  FROM ${catalog}.retail.vw_labor_coverage\n",
+            "  GROUP BY store_id, store_name, store_type, reg_name\n",
+            "),\n",
+            "type_avg AS (\n",
+            "  SELECT store_type, AVG(CAST(headcount AS DOUBLE)) AS avg_headcount\n",
+            "  FROM store_hc GROUP BY store_type\n",
+            ")\n",
+            "SELECT s.store_name, s.store_type, s.reg_name, s.headcount,\n",
+            "  ROUND(t.avg_headcount, 1) AS avg_for_type,\n",
+            "  s.headcount - ROUND(t.avg_headcount, 0) AS delta\n",
+            "FROM store_hc s\n",
+            "JOIN type_avg t ON t.store_type = s.store_type\n",
+            "WHERE s.headcount < t.avg_headcount\n",
+            "ORDER BY delta ASC"
+          ]
+        },
+        {
+          "id": "c300000000000000000000000000200c",
+          "question": ["Shift coverage breakdown for a specific store"],
+          "sql": [
+            "SELECT shift,\n",
+            "  COUNT(DISTINCT associate_id) AS associates,\n",
+            "  SUM(orders_managed) AS total_orders_managed,\n",
+            "  SUM(tasks_completed) AS total_tasks_completed\n",
+            "FROM ${catalog}.retail.vw_labor_coverage\n",
+            "WHERE store_name LIKE '%42%'\n",
+            "GROUP BY shift\n",
+            "ORDER BY shift"
+          ],
+          "usage_guidance": ["Use when the user asks about shift coverage for a specific store. Replace the store filter as needed."]
+        },
+        {
+          "id": "c400000000000000000000000000200d",
+          "question": ["Role distribution across all stores"],
+          "sql": [
+            "SELECT role,\n",
+            "  COUNT(DISTINCT associate_id) AS total_associates,\n",
+            "  COUNT(DISTINCT store_id) AS stores_with_role,\n",
+            "  AVG(CAST(orders_managed AS DOUBLE)) AS avg_orders_per_associate,\n",
+            "  AVG(CAST(tasks_completed AS DOUBLE)) AS avg_tasks_per_associate\n",
+            "FROM ${catalog}.retail.vw_labor_coverage\n",
+            "GROUP BY role\n",
+            "ORDER BY total_associates DESC"
+          ]
+        },
+        {
+          "id": "c500000000000000000000000000200e",
+          "question": ["Stores with single-associate shifts (coverage risk)"],
+          "sql": [
+            "SELECT store_name, reg_name, shift,\n",
+            "  COUNT(DISTINCT associate_id) AS associates\n",
+            "FROM ${catalog}.retail.vw_labor_coverage\n",
+            "GROUP BY store_name, reg_name, shift\n",
+            "HAVING COUNT(DISTINCT associate_id) = 1\n",
+            "ORDER BY store_name, shift"
+          ]
+        },
+        {
+          "id": "c600000000000000000000000000200f",
+          "question": ["Top 10 most productive associates"],
+          "sql": [
+            "SELECT associate_id, store_name, role, shift,\n",
+            "  orders_managed, tasks_completed,\n",
+            "  orders_managed + tasks_completed AS total_activity\n",
+            "FROM ${catalog}.retail.vw_labor_coverage\n",
+            "ORDER BY total_activity DESC\n",
+            "LIMIT 10"
+          ]
+        },
+        {
+          "id": "c700000000000000000000000000201a",
+          "question": ["Average productivity by region"],
+          "sql": [
+            "SELECT reg_name,\n",
+            "  COUNT(DISTINCT associate_id) AS headcount,\n",
+            "  AVG(CAST(orders_managed AS DOUBLE)) AS avg_orders_managed,\n",
+            "  AVG(CAST(tasks_completed AS DOUBLE)) AS avg_tasks_completed\n",
+            "FROM ${catalog}.retail.vw_labor_coverage\n",
+            "GROUP BY reg_name\n",
+            "ORDER BY avg_orders_managed DESC"
+          ]
+        }
+      ],
+      "join_specs": [
+        {
+          "id": "d100000000000000000000000000200a",
+          "left": {
+            "identifier": "${catalog}.retail.associate_assignments",
+            "alias": "assignments"
+          },
+          "right": {
+            "identifier": "${catalog}.retail.stores",
+            "alias": "stores"
+          },
+          "sql": ["`assignments`.`str_id` = `stores`.`str_id`", "--rt=FROM_RELATIONSHIP_TYPE_MANY_TO_ONE--"],
+          "comment": ["Join assignments to stores on str_id"],
+          "instruction": ["Use to get store details for associate assignments"]
+        },
+        {
+          "id": "d200000000000000000000000000200b",
+          "left": {
+            "identifier": "${catalog}.retail.stores",
+            "alias": "stores"
+          },
+          "right": {
+            "identifier": "${catalog}.retail.regions",
+            "alias": "regions"
+          },
+          "sql": ["`stores`.`reg_id` = `regions`.`reg_id`", "--rt=FROM_RELATIONSHIP_TYPE_MANY_TO_ONE--"],
+          "comment": ["Join stores to regions on reg_id"],
+          "instruction": ["Use to get region details for stores"]
+        }
+      ]
+    }
+  }
+}

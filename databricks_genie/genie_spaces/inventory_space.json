@@ -1,0 +1,315 @@
+{
+  "title": "Store Intelligence — Inventory & OOS",
+  "description": "Inventory health, on-shelf availability, out-of-stock classification (chronic, true, phantom, at-risk), reorder points, demand signals, and supply-chain risk.",
+  "warehouse_id": "<your-sql-warehouse-id>",
+  "parent_path": "/Workspace/Users/<username>",
+  "serialized_space": {
+    "version": 2,
+    "config": {
+      "sample_questions": [
+        {
+          "id": "a100000000000000000000000000100a",
+          "question": ["Which products have inventory risk?"]
+        },
+        {
+          "id": "a200000000000000000000000000100b",
+          "question": ["Show me all out-of-stock products"]
+        },
+        {
+          "id": "a300000000000000000000000000100c",
+          "question": ["On-shelf availability rate by store this week"]
+        },
+        {
+          "id": "a400000000000000000000000000100d",
+          "question": ["Show me chronic out-of-stock problems"]
+        },
+        {
+          "id": "a500000000000000000000000000100e",
+          "question": ["Which stores have the lowest on-shelf availability?"]
+        }
+      ]
+    },
+    "data_sources": {
+      "tables": [
+        {
+          "identifier": "${catalog}.retail.demand_signals"
+        },
+        {
+          "identifier": "${catalog}.retail.inventories"
+        },
+        {
+          "identifier": "${catalog}.retail.product_categories"
+        },
+        {
+          "identifier": "${catalog}.retail.products"
+        },
+        {
+          "identifier": "${catalog}.retail.regions",
+          "column_configs": [
+            {
+              "column_name": "reg_name",
+              "enable_entity_matching": true,
+              "enable_format_assistance": true
+            }
+          ]
+        },
+        {
+          "identifier": "${catalog}.retail.stores",
+          "column_configs": [
+            {
+              "column_name": "str_name",
+              "enable_entity_matching": true
+            }
+          ]
+        },
+        {
+          "identifier": "${catalog}.retail.visual_osa_daily"
+        },
+        {
+          "identifier": "${catalog}.retail.vw_inventory_health",
+          "description": ["Inventory + product + category + warehouse + region + demand signals + forecasts with risk_flag. One row per product x warehouse."],
+          "column_configs": [
+            {
+              "column_name": "risk_flag",
+              "description": ["DISCONTINUED, PERISHABLE_LEAD_TIME_RISK, or OK"],
+              "enable_entity_matching": true,
+              "enable_format_assistance": true
+            }
+          ]
+        },
+        {
+          "identifier": "${catalog}.retail.vw_oos_classification",
+          "description": ["OOS classification per store x product: TRUE_OOS, PHANTOM_OOS, AT_RISK_OOS, CHRONIC_OOS, or OK. Point-in-time snapshot."],
+          "column_configs": [
+            {
+              "column_name": "oos_classification",
+              "description": ["OOS type: TRUE_OOS (off-shelf + zero sales 7d), PHANTOM_OOS (off-shelf + warehouse has stock + recent sales), AT_RISK_OOS (on-shelf + high velocity), CHRONIC_OOS (off-shelf >=50% of 14d), OK"],
+              "enable_entity_matching": true,
+              "enable_format_assistance": true
+            }
+          ]
+        },
+        {
+          "identifier": "${catalog}.retail.vw_osa_daily",
+          "description": ["Daily on-shelf availability scans by store x product x date. Use for trend analysis."]
+        },
+        {
+          "identifier": "${catalog}.retail.warehouses"
+        }
+      ]
+    },
+    "instructions": {
+      "text_instructions": [
+        {
+          "id": "b100000000000000000000000000100a",
+          "content": [
+            "You are a Retail Inventory Analyst. Help users understand stock health, on-shelf availability, stockout risks, and replenishment needs. ",
+            "Inventory data is at warehouse level (inventories has wh_id), not store level. OSA data (visual_osa_daily) is at store level. ",
+            "Use vw_inventory_health for warehouse/product inventory questions. Use vw_osa_daily for store-level shelf availability. ",
+            "Risk flags in vw_inventory_health: DISCONTINUED (is_disc=1), PERISHABLE_LEAD_TIME_RISK (perishable + lead time > shelf life), OK. ",
+            "On-shelf availability rate = SUM(CAST(on_shelf_flag AS INT)) * 100.0 / COUNT(*) from vw_osa_daily. ",
+            "OOS Classifications in vw_oos_classification: TRUE_OOS (off-shelf + zero sales 7d), PHANTOM_OOS (off-shelf + warehouse stock + recent sales), AT_RISK_OOS (on-shelf + >=2x avg velocity), CHRONIC_OOS (off-shelf >=50% of 14d, min 3 scans), OK. ",
+            "When asked about stockout or OOS, always use vw_oos_classification and report the classification type. Cross-reference with vw_inventory_health for warehouse parameters. ",
+            "Perishable products (is_perishable=1) deserve special attention — highlight shelf life vs lead time issues. ",
+            "For trend questions, use vw_osa_daily grouped by osa_date. ",
+            "When summarizing OOS, always report counts by classification type and highlight CHRONIC_OOS and TRUE_OOS as highest priority."
+          ]
+        }
+      ],
+      "example_question_sqls": [
+        {
+          "id": "c100000000000000000000000000100a",
+          "question": ["Which products have inventory risk?"],
+          "sql": [
+            "SELECT prod_name, brand_name, cat_name, wh_name, reg_name,\n",
+            "  safety_stock_qty, reorder_point_qty, lead_time_days, risk_flag\n",
+            "FROM ${catalog}.retail.vw_inventory_health\n",
+            "WHERE risk_flag <> 'OK'\n",
+            "ORDER BY risk_flag, prod_name"
+          ]
+        },
+        {
+          "id": "c200000000000000000000000000100b",
+          "question": ["Show perishable products where lead time exceeds shelf life"],
+          "sql": [
+            "SELECT prod_name, cat_name, wh_name, reg_name,\n",
+            "  lead_time_days, shelf_life_days,\n",
+            "  lead_time_days - shelf_life_days AS days_over\n",
+            "FROM ${catalog}.retail.vw_inventory_health\n",
+            "WHERE is_perishable = 1 AND lead_time_days > shelf_life_days\n",
+            "ORDER BY days_over DESC"
+          ]
+        },
+        {
+          "id": "c300000000000000000000000000100c",
+          "question": ["On-shelf availability rate by store this week"],
+          "sql": [
+            "SELECT store_name, reg_name,\n",
+            "  COUNT(*) AS total_scans,\n",
+            "  SUM(CAST(on_shelf_flag AS INT)) AS on_shelf_count,\n",
+            "  SUM(CAST(on_shelf_flag AS INT)) * 100.0 / COUNT(*) AS osa_rate_pct\n",
+            "FROM ${catalog}.retail.vw_osa_daily\n",
+            "WHERE osa_date >= DATE_SUB(CURRENT_DATE(), 7)\n",
+            "GROUP BY store_name, reg_name\n",
+            "ORDER BY osa_rate_pct ASC"
+          ]
+        },
+        {
+          "id": "c400000000000000000000000000100d",
+          "question": ["Which products are most often off-shelf?"],
+          "sql": [
+            "SELECT prod_name, cat_name,\n",
+            "  COUNT(*) AS total_scans,\n",
+            "  SUM(CASE WHEN on_shelf_flag = 0 THEN 1 ELSE 0 END) AS off_shelf_count,\n",
+            "  SUM(CASE WHEN on_shelf_flag = 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) AS off_shelf_pct\n",
+            "FROM ${catalog}.retail.vw_osa_daily\n",
+            "WHERE osa_date >= DATE_SUB(CURRENT_DATE(), 14)\n",
+            "GROUP BY prod_name, cat_name\n",
+            "ORDER BY off_shelf_pct DESC\n",
+            "LIMIT 10"
+          ]
+        },
+        {
+          "id": "c500000000000000000000000000100e",
+          "question": ["On-shelf availability trend for dairy"],
+          "sql": [
+            "SELECT osa_date,\n",
+            "  COUNT(*) AS scans,\n",
+            "  SUM(CAST(on_shelf_flag AS INT)) * 100.0 / COUNT(*) AS osa_rate_pct\n",
+            "FROM ${catalog}.retail.vw_osa_daily\n",
+            "WHERE depa_name = 'Dairy'\n",
+            "  AND osa_date >= DATE_SUB(CURRENT_DATE(), 30)\n",
+            "GROUP BY osa_date\n",
+            "ORDER BY osa_date"
+          ]
+        },
+        {
+          "id": "c600000000000000000000000000100f",
+          "question": ["Inventory overview for the Northwest warehouse"],
+          "sql": [
+            "SELECT prod_name, cat_name, safety_stock_qty, reorder_point_qty,\n",
+            "  lead_time_days, demand_channel, forecast_horizon_days, risk_flag\n",
+            "FROM ${catalog}.retail.vw_inventory_health\n",
+            "WHERE wh_name LIKE '%Northwest%'\n",
+            "ORDER BY risk_flag DESC, prod_name"
+          ]
+        },
+        {
+          "id": "c700000000000000000000000000101a",
+          "question": ["Which stores have the lowest on-shelf availability?"],
+          "sql": [
+            "SELECT store_name, store_type, reg_name,\n",
+            "  SUM(CAST(on_shelf_flag AS INT)) * 100.0 / COUNT(*) AS osa_rate_pct\n",
+            "FROM ${catalog}.retail.vw_osa_daily\n",
+            "WHERE osa_date >= DATE_SUB(CURRENT_DATE(), 7)\n",
+            "GROUP BY store_name, store_type, reg_name\n",
+            "ORDER BY osa_rate_pct ASC\n",
+            "LIMIT 5"
+          ]
+        },
+        {
+          "id": "c800000000000000000000000000101b",
+          "question": ["Show me all out-of-stock products"],
+          "sql": [
+            "SELECT oos_classification, COUNT(*) AS product_count\n",
+            "FROM ${catalog}.retail.vw_oos_classification\n",
+            "WHERE oos_classification <> 'OK'\n",
+            "GROUP BY oos_classification\n",
+            "ORDER BY product_count DESC"
+          ]
+        },
+        {
+          "id": "c900000000000000000000000000101c",
+          "question": ["Which products are truly out of stock?"],
+          "sql": [
+            "SELECT store_name, prod_name, cat_name, brand_name,\n",
+            "  last_scan_date, units_sold_7d, days_off_shelf_14d, oos_classification\n",
+            "FROM ${catalog}.retail.vw_oos_classification\n",
+            "WHERE oos_classification = 'TRUE_OOS'\n",
+            "ORDER BY store_name, prod_name"
+          ]
+        },
+        {
+          "id": "ca00000000000000000000000000101d",
+          "question": ["Show me phantom out-of-stocks"],
+          "sql": [
+            "SELECT store_name, prod_name, cat_name, brand_name,\n",
+            "  last_scan_date, units_sold_7d, revenue_7d,\n",
+            "  has_warehouse_inventory, safety_stock_qty, oos_classification\n",
+            "FROM ${catalog}.retail.vw_oos_classification\n",
+            "WHERE oos_classification = 'PHANTOM_OOS'\n",
+            "ORDER BY revenue_7d DESC"
+          ]
+        },
+        {
+          "id": "cb00000000000000000000000000101e",
+          "question": ["Which products are at risk of going out of stock?"],
+          "sql": [
+            "SELECT store_name, prod_name, cat_name,\n",
+            "  units_sold_7d, orders_7d, revenue_7d,\n",
+            "  safety_stock_qty, reorder_point_qty, lead_time_days, oos_classification\n",
+            "FROM ${catalog}.retail.vw_oos_classification\n",
+            "WHERE oos_classification = 'AT_RISK_OOS'\n",
+            "ORDER BY units_sold_7d DESC"
+          ]
+        },
+        {
+          "id": "cc00000000000000000000000000101f",
+          "question": ["Show me chronic out-of-stock problems"],
+          "sql": [
+            "SELECT store_name, prod_name, cat_name, depa_name,\n",
+            "  days_scanned_14d, days_off_shelf_14d, off_shelf_pct_14d,\n",
+            "  units_sold_7d, oos_classification\n",
+            "FROM ${catalog}.retail.vw_oos_classification\n",
+            "WHERE oos_classification = 'CHRONIC_OOS'\n",
+            "ORDER BY off_shelf_pct_14d DESC"
+          ]
+        },
+        {
+          "id": "cd00000000000000000000000000102a",
+          "question": ["OOS summary by store — which stores have the most issues?"],
+          "sql": [
+            "SELECT store_name, reg_name,\n",
+            "  COUNT(CASE WHEN oos_classification = 'TRUE_OOS' THEN 1 END) AS true_oos,\n",
+            "  COUNT(CASE WHEN oos_classification = 'PHANTOM_OOS' THEN 1 END) AS phantom_oos,\n",
+            "  COUNT(CASE WHEN oos_classification = 'AT_RISK_OOS' THEN 1 END) AS at_risk,\n",
+            "  COUNT(CASE WHEN oos_classification = 'CHRONIC_OOS' THEN 1 END) AS chronic_oos,\n",
+            "  COUNT(CASE WHEN oos_classification <> 'OK' THEN 1 END) AS total_issues\n",
+            "FROM ${catalog}.retail.vw_oos_classification\n",
+            "GROUP BY store_name, reg_name\n",
+            "HAVING COUNT(CASE WHEN oos_classification <> 'OK' THEN 1 END) > 0\n",
+            "ORDER BY total_issues DESC"
+          ]
+        },
+        {
+          "id": "ce00000000000000000000000000102b",
+          "question": ["OOS breakdown by category — which departments are worst?"],
+          "sql": [
+            "SELECT depa_name, cat_name,\n",
+            "  COUNT(CASE WHEN oos_classification = 'TRUE_OOS' THEN 1 END) AS true_oos,\n",
+            "  COUNT(CASE WHEN oos_classification = 'PHANTOM_OOS' THEN 1 END) AS phantom_oos,\n",
+            "  COUNT(CASE WHEN oos_classification = 'AT_RISK_OOS' THEN 1 END) AS at_risk,\n",
+            "  COUNT(CASE WHEN oos_classification = 'CHRONIC_OOS' THEN 1 END) AS chronic_oos,\n",
+            "  COUNT(CASE WHEN oos_classification <> 'OK' THEN 1 END) AS total_issues\n",
+            "FROM ${catalog}.retail.vw_oos_classification\n",
+            "GROUP BY depa_name, cat_name\n",
+            "HAVING COUNT(CASE WHEN oos_classification <> 'OK' THEN 1 END) > 0\n",
+            "ORDER BY total_issues DESC"
+          ]
+        },
+        {
+          "id": "cf00000000000000000000000000102c",
+          "question": ["Identify chronic out-of-stocks for perishable products"],
+          "sql": [
+            "SELECT store_name, prod_name, cat_name,\n",
+            "  days_off_shelf_14d, off_shelf_pct_14d,\n",
+            "  lead_time_days, oos_classification\n",
+            "FROM ${catalog}.retail.vw_oos_classification\n",
+            "WHERE oos_classification = 'CHRONIC_OOS' AND is_perishable = 1\n",
+            "ORDER BY off_shelf_pct_14d DESC"
+          ]
+        }
+      ]
+    }
+  }
+}

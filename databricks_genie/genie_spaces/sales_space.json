@@ -1,0 +1,326 @@
+{
+  "title": "Store Intelligence — Sales",
+  "description": "Retail sales performance analytics: revenue, orders, margins, product/category/store trends, and period comparisons.",
+  "warehouse_id": "<your-sql-warehouse-id>",
+  "parent_path": "/Workspace/Users/<username>",
+  "serialized_space": {
+    "version": 2,
+    "config": {
+      "sample_questions": [
+        {
+          "id": "a100000000000000000000000000000a",
+          "question": ["How did the Northeast region perform last week?"]
+        },
+        {
+          "id": "a200000000000000000000000000000b",
+          "question": ["What are the top 10 selling products this month?"]
+        },
+        {
+          "id": "a300000000000000000000000000000c",
+          "question": ["Compare this week vs last week revenue by region"]
+        },
+        {
+          "id": "a400000000000000000000000000000d",
+          "question": ["Which departments have the highest margin?"]
+        }
+      ]
+    },
+    "data_sources": {
+      "tables": [
+        {
+          "identifier": "${catalog}.retail.forecasts"
+        },
+        {
+          "identifier": "${catalog}.retail.order_lines"
+        },
+        {
+          "identifier": "${catalog}.retail.orders",
+          "column_configs": [
+            {
+              "column_name": "ord_dt",
+              "description": ["Order date"],
+              "enable_format_assistance": true
+            },
+            {
+              "column_name": "ord_status",
+              "enable_entity_matching": true,
+              "enable_format_assistance": true
+            },
+            {
+              "column_name": "paym_method_type",
+              "enable_entity_matching": true,
+              "enable_format_assistance": true
+            }
+          ]
+        },
+        {
+          "identifier": "${catalog}.retail.product_categories"
+        },
+        {
+          "identifier": "${catalog}.retail.products"
+        },
+        {
+          "identifier": "${catalog}.retail.regions",
+          "column_configs": [
+            {
+              "column_name": "reg_name",
+              "enable_entity_matching": true,
+              "enable_format_assistance": true
+            }
+          ]
+        },
+        {
+          "identifier": "${catalog}.retail.stores",
+          "column_configs": [
+            {
+              "column_name": "str_name",
+              "enable_entity_matching": true
+            },
+            {
+              "column_name": "str_type",
+              "enable_entity_matching": true,
+              "enable_format_assistance": true
+            }
+          ]
+        },
+        {
+          "identifier": "${catalog}.retail.vw_sales_summary",
+          "description": ["Pre-joined order + line-item data with store, product, category, and region dimensions. One row per order line. Prefer this view for most queries."]
+        }
+      ]
+    },
+    "instructions": {
+      "text_instructions": [
+        {
+          "id": "b100000000000000000000000000000a",
+          "content": [
+            "You are a Retail Sales Analyst. Help store managers and executives understand sales performance. ",
+            "Always use the retail schema prefix. ",
+            "Default time range: if the user does not specify, use the last 7 days. ",
+            "Sales are at store level. The orders table has both str_id and reg_id. Report at store or region level. ",
+            "Prefer vw_sales_summary for most queries — it pre-joins orders, line items, products, categories, stores, and regions. ",
+            "Revenue = ln_total_amt (line total) or ord_total_amt (order total). Use line-level for product breakdowns. ",
+            "Margin = line_margin_amt, calculated as (unit_price_amt - unit_cost_amt) * qty. ",
+            "Do not expose customer IDs. Only use for aggregate counts. ",
+            "When asked how a store or region is doing, provide: total revenue, order count, units sold, avg basket size, top categories. ",
+            "Format currency as USD with 2 decimal places. Format large numbers with commas."
+          ]
+        }
+      ],
+      "example_question_sqls": [
+        {
+          "id": "c100000000000000000000000000000a",
+          "question": ["How did the Northeast region perform last week?"],
+          "sql": [
+            "SELECT\n",
+            "    reg_name,\n",
+            "    COUNT(DISTINCT ord_id) AS total_orders,\n",
+            "    SUM(qty) AS total_units,\n",
+            "    SUM(line_total) AS total_revenue,\n",
+            "    SUM(line_margin_amt) AS total_margin,\n",
+            "    SUM(line_total) / NULLIF(COUNT(DISTINCT ord_id), 0) AS avg_basket_size\n",
+            "FROM ${catalog}.retail.vw_sales_summary\n",
+            "WHERE reg_name = 'Northeast'\n",
+            "  AND order_date >= DATE_SUB(CURRENT_DATE(), 7)\n",
+            "GROUP BY reg_name"
+          ]
+        },
+        {
+          "id": "c200000000000000000000000000000b",
+          "question": ["What are the top 10 selling products this month?"],
+          "sql": [
+            "SELECT\n",
+            "    prod_name, brand_name, cat_name,\n",
+            "    SUM(qty) AS total_units,\n",
+            "    SUM(line_total) AS total_revenue\n",
+            "FROM ${catalog}.retail.vw_sales_summary\n",
+            "WHERE order_date >= DATE_TRUNC('MONTH', CURRENT_DATE())\n",
+            "GROUP BY prod_name, brand_name, cat_name\n",
+            "ORDER BY total_revenue DESC\n",
+            "LIMIT 10"
+          ]
+        },
+        {
+          "id": "c300000000000000000000000000000c",
+          "question": ["Show me daily revenue trend for the Southeast region"],
+          "sql": [
+            "SELECT\n",
+            "    order_date,\n",
+            "    COUNT(DISTINCT ord_id) AS orders,\n",
+            "    SUM(line_total) AS revenue\n",
+            "FROM ${catalog}.retail.vw_sales_summary\n",
+            "WHERE reg_name = 'Southeast'\n",
+            "  AND order_date >= DATE_SUB(CURRENT_DATE(), 30)\n",
+            "GROUP BY order_date\n",
+            "ORDER BY order_date"
+          ]
+        },
+        {
+          "id": "c400000000000000000000000000000d",
+          "question": ["Which departments have the highest margin?"],
+          "sql": [
+            "SELECT\n",
+            "    depa_name,\n",
+            "    SUM(line_total) AS revenue,\n",
+            "    SUM(line_margin_amt) AS margin,\n",
+            "    SUM(line_margin_amt) / NULLIF(SUM(line_total), 0) * 100 AS margin_pct\n",
+            "FROM ${catalog}.retail.vw_sales_summary\n",
+            "WHERE order_date >= DATE_SUB(CURRENT_DATE(), 30)\n",
+            "GROUP BY depa_name\n",
+            "ORDER BY margin DESC"
+          ]
+        },
+        {
+          "id": "c500000000000000000000000000000e",
+          "question": ["How many expedited orders did we have this week?"],
+          "sql": [
+            "SELECT\n",
+            "    reg_name,\n",
+            "    COUNT(DISTINCT ord_id) AS expedited_orders,\n",
+            "    SUM(line_total) AS expedited_revenue\n",
+            "FROM ${catalog}.retail.vw_sales_summary\n",
+            "WHERE is_expedited = 1\n",
+            "  AND order_date >= DATE_SUB(CURRENT_DATE(), 7)\n",
+            "GROUP BY reg_name\n",
+            "ORDER BY expedited_orders DESC"
+          ]
+        },
+        {
+          "id": "c600000000000000000000000000000f",
+          "question": ["Compare this week vs last week revenue by region"],
+          "sql": [
+            "SELECT\n",
+            "    reg_name,\n",
+            "    SUM(CASE WHEN order_date >= DATE_SUB(CURRENT_DATE(), 7)\n",
+            "             THEN line_total ELSE 0 END) AS this_week_revenue,\n",
+            "    SUM(CASE WHEN order_date >= DATE_SUB(CURRENT_DATE(), 14)\n",
+            "              AND order_date < DATE_SUB(CURRENT_DATE(), 7)\n",
+            "             THEN line_total ELSE 0 END) AS last_week_revenue\n",
+            "FROM ${catalog}.retail.vw_sales_summary\n",
+            "WHERE order_date >= DATE_SUB(CURRENT_DATE(), 14)\n",
+            "GROUP BY reg_name\n",
+            "ORDER BY reg_name"
+          ]
+        },
+        {
+          "id": "c700000000000000000000000000001a",
+          "question": ["Payment method breakdown"],
+          "sql": [
+            "SELECT\n",
+            "    paym_method_type,\n",
+            "    COUNT(DISTINCT ord_id) AS order_count,\n",
+            "    SUM(line_total) AS revenue\n",
+            "FROM ${catalog}.retail.vw_sales_summary\n",
+            "WHERE order_date >= DATE_SUB(CURRENT_DATE(), 30)\n",
+            "GROUP BY paym_method_type\n",
+            "ORDER BY revenue DESC"
+          ]
+        }
+      ],
+      "join_specs": [
+        {
+          "id": "d100000000000000000000000000000a",
+          "left": {
+            "identifier": "${catalog}.retail.orders",
+            "alias": "orders"
+          },
+          "right": {
+            "identifier": "${catalog}.retail.order_lines",
+            "alias": "order_lines"
+          },
+          "sql": ["`orders`.`ord_id` = `order_lines`.`ord_id`", "--rt=FROM_RELATIONSHIP_TYPE_ONE_TO_MANY--"],
+          "comment": ["Join orders to order_lines on ord_id"],
+          "instruction": ["Use this join for line-level sales analysis"]
+        },
+        {
+          "id": "d200000000000000000000000000000b",
+          "left": {
+            "identifier": "${catalog}.retail.order_lines",
+            "alias": "order_lines"
+          },
+          "right": {
+            "identifier": "${catalog}.retail.products",
+            "alias": "products"
+          },
+          "sql": ["`order_lines`.`prod_id` = `products`.`prod_id`", "--rt=FROM_RELATIONSHIP_TYPE_MANY_TO_ONE--"],
+          "comment": ["Join order_lines to products on prod_id"],
+          "instruction": ["Use to get product details for line items"]
+        },
+        {
+          "id": "d300000000000000000000000000000c",
+          "left": {
+            "identifier": "${catalog}.retail.orders",
+            "alias": "orders"
+          },
+          "right": {
+            "identifier": "${catalog}.retail.stores",
+            "alias": "stores"
+          },
+          "sql": ["`orders`.`str_id` = `stores`.`str_id`", "--rt=FROM_RELATIONSHIP_TYPE_MANY_TO_ONE--"],
+          "comment": ["Join orders to stores on str_id"],
+          "instruction": ["Use to get store details for orders"]
+        },
+        {
+          "id": "d400000000000000000000000000000d",
+          "left": {
+            "identifier": "${catalog}.retail.orders",
+            "alias": "orders"
+          },
+          "right": {
+            "identifier": "${catalog}.retail.regions",
+            "alias": "regions"
+          },
+          "sql": ["`orders`.`reg_id` = `regions`.`reg_id`", "--rt=FROM_RELATIONSHIP_TYPE_MANY_TO_ONE--"],
+          "comment": ["Join orders to regions on reg_id"],
+          "instruction": ["Use to get region details for orders"]
+        },
+        {
+          "id": "d500000000000000000000000000000e",
+          "left": {
+            "identifier": "${catalog}.retail.products",
+            "alias": "products"
+          },
+          "right": {
+            "identifier": "${catalog}.retail.product_categories",
+            "alias": "product_categories"
+          },
+          "sql": ["`products`.`prod_cat_id` = `product_categories`.`prod_cat_id`", "--rt=FROM_RELATIONSHIP_TYPE_MANY_TO_ONE--"],
+          "comment": ["Join products to product_categories on prod_cat_id"],
+          "instruction": ["Use to get category and department for products"]
+        }
+      ],
+      "sql_snippets": {
+        "measures": [
+          {
+            "id": "e100000000000000000000000000000a",
+            "alias": "total_revenue",
+            "sql": ["SUM(vw_sales_summary.line_total)"],
+            "display_name": "total revenue",
+            "synonyms": ["revenue", "total sales", "sales"],
+            "comment": ["Sum of all line totals"],
+            "instruction": ["Use for revenue calculations"]
+          },
+          {
+            "id": "e200000000000000000000000000000b",
+            "alias": "total_margin",
+            "sql": ["SUM(vw_sales_summary.line_margin_amt)"],
+            "display_name": "total margin",
+            "synonyms": ["margin", "gross margin", "profit"],
+            "comment": ["Sum of line-level margin"],
+            "instruction": ["Use for margin/profit calculations"]
+          }
+        ],
+        "filters": [
+          {
+            "id": "e300000000000000000000000000000c",
+            "sql": ["vw_sales_summary.order_date >= DATE_SUB(CURRENT_DATE(), 7)"],
+            "display_name": "last 7 days",
+            "synonyms": ["this week", "past week", "last week"],
+            "comment": ["Filter to last 7 days"],
+            "instruction": ["Default time filter when user does not specify a date range"]
+          }
+        ]
+      }
+    }
+  }
+}
